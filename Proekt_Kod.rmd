@@ -1,0 +1,92 @@
+---
+title: "Проект МСА"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(factoextra)
+library(ggplot2)
+library(mapproj)
+```
+
+## Первоначальная загрузка датасета
+Сначала загрузим датасет и приведем его к виду, подходящему для изначального анализа.Для простоты будем рассматривать только США. Удалим наблюдения старше 2000 года и наблюдения, территориально относящиеся к Гаваям и Аляске
+```{r, echo=FALSE}
+data<- read.csv("complete.csv", sep = ",", dec = ",", stringsAsFactors=FALSE)
+data <- subset(data,country == "us")
+data$datetime <- substring(data$datetime, 7, 11)
+data$datetime <- as.numeric(data$datetime)
+data <- subset(data, datetime > 2000)
+data <- data[,c(6,10,11)]
+data$duration..seconds. <- as.numeric(data$duration..seconds.)
+data$latitude <- as.numeric(data$latitude)
+data$longitude <- as.numeric(data$longitude)
+data <- subset(data, longitude > -130)
+```
+Смотрим на данные - видим, что если наблюдения в которых значения широты и долготы равны 0 - избавляемся от них.(Конечно возможно то, что наблюдение НЛО просиходило ровно на 0 широте или долготе, но скорее это ошибочные наблюдения)
+```{r}
+data <- data[data$latitude != 0, ]
+data <- data[data$longitude != 0, ]
+```
+Еще раз посмотрем на данные понимаем, что есть наблюдения НЛО продолжительностью 0 секунд, их тоже отметаем как недостоверные. И наконец нормируем данные
+```{r}
+data <- data[data$duration..seconds. != 0, ]
+data <- na.omit(data)
+std_latitude <- sd(data$latitude)
+mean_latitude <- mean(data$latitude)
+std_longitude <- sd(data$longitude)
+mean_longitude <- mean(data$longitude)
+centered_data <- scale(data, scale = TRUE)
+```
+
+##Попробуем провести кластеризацию методом Kmeans
+Сначала рассчитаем оптимальное число кластеров. По графику получаем, что такое число кластеров равно 9.
+```{r}
+set.seed(42)
+wss <- (nrow(centered_data)-1)*sum(apply(centered_data,2,var))
+for (i in 2:15) wss[i] <- sum(kmeans(centered_data,
+                                     centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+title("WSS by number of clusters")
+```
+Попробуем разбить на данное число кластеров и отрисовать это разбиение в координатах
+```{r}
+set.seed(42)
+k2 <- kmeans(centered_data, centers = 11)
+fviz_cluster(k2, data = centered_data, choose.vars = c("latitude","longitude"), geom=c("points"))
+centers <- k2$centers
+centers <- centers[,c(2,3)]
+centers <- as.data.frame(centers)
+centers$latitude <- centers$latitude*std_latitude+mean_latitude
+centers$longitude <- centers$longitude*std_longitude+mean_longitude
+```
+Попробуем отрисовать разбиение на изначальных координатах. На карте США нам хотелось бы показать центы получившихся кластеров, координаты которых мы нашли возвратом к исходным координатам.
+```{r}
+data$clusters <- k2$cluster
+
+us <- map_data('world', c("usa","canada","hawaii","alaska","mexico"))
+ggplot(data, aes(longitude, latitude))+
+  geom_polygon(data=us, aes(x=long, y=lat, group = group), colour="grey20", fill="grey80")+
+  geom_point(data=centers,aes(x=longitude, y = latitude), color=c("red","green","blue","purple", "orange","yellow","white","black","chocolate","gold","maroon4"))+
+  coord_map(projection = "mercator", xlim=c(-170, -50))
+
+us <- map_data('world', c("usa"))
+ggplot(data, aes(longitude, latitude))+
+  geom_polygon(data=us, aes(x=long, y=lat, group = group), colour="grey20", fill="grey80")+
+  geom_point(data=centers,aes(x=longitude, y = latitude), color=c("red","green","blue","purple", "orange","yellow","white","black","chocolate","gold","maroon4"))+
+  coord_map(projection = "mercator", xlim=c(-130, -65), ylim=c(20,50))
+```
+Также добавим базу данных с координатами международных американских самолетов и добавим их координаты на карту
+```{r}
+data_airports<- read.csv("Airport Coordinates.csv", sep = ";", dec = ",", stringsAsFactors=FALSE)
+data_airports <- na.omit(data_airports)
+s <- map_data('world', c("usa"))
+ggplot(data, aes(longitude, latitude))+
+  geom_polygon(data=us, aes(x=long, y=lat, group = group), colour="grey20", fill="grey80")+
+  geom_point(data=centers,aes(x=longitude, y = latitude), color=c("salmon","green","blue","purple", "orange","yellow","white","black","chocolate","gold","maroon4"), size=3)+
+  geom_point(data=data_airports, aes(x=Longitude, y = Latitude), color = c("red"), shape=2, size=3)+
+  coord_map(projection = "mercator", xlim=c(-130, -65), ylim=c(20,50))
+```
+
